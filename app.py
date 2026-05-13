@@ -9,20 +9,31 @@ from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 st.set_page_config(page_title="Generador de Pedidos Pro", layout="wide")
 
 def extraer_codigo_final(nombre_producto):
+    """
+    1. Excluye '4K' si está entre espacios.
+    2. Busca el primer dígito numérico.
+    3. Extrae 5 caracteres y devuelve el código SIN guion (PLXXXXX).
+    """
     if pd.isna(nombre_producto): return "S/N"
+    
     nombre_str = str(nombre_producto).upper()
-    # Eliminar '4K' si está como palabra independiente
+    
+    # Exclusión de '4K' con separadores de espacio
     nombre_str = re.sub(r'\s+4K\s+', ' ', nombre_str)
-    # Buscar el primer dígito numérico
+    
+    # Buscar el primer carácter numérico
     match_numero = re.search(r'\d', nombre_str)
+    
     if match_numero:
         inicio = match_numero.start()
-        # Extraer 5 caracteres (Formato PLXXXXX sin guion)
+        # Extraer 5 caracteres a partir del primer número
         bloque = nombre_str[inicio:inicio+5]
+        # Retorna el código completo sin guiones
         return f"PL{bloque}"
+    
     return "SIN_MODELO"
 
-st.title("📊 Generador de Pedidos - Formato MOTSUR")
+st.title("📊 Generador de Pedidos - Formato MOTSUR (Sin Guiones)")
 
 uploaded_file = st.file_uploader("Sube el archivo de Excel de control", type=["xlsx", "xls"])
 
@@ -73,7 +84,7 @@ if uploaded_file is not None:
                         'CODIGO': df_res['CODIGO_PL']
                     })
 
-                    # Rellenar celdas vacías con "REVISAR" para evitar errores de formato
+                    # Rellenar celdas vacías con "REVISAR"
                     df_final = df_final.fillna("REVISAR")
 
                     st.dataframe(df_final, use_container_width=True)
@@ -84,14 +95,14 @@ if uploaded_file is not None:
                         df_final.to_excel(writer, index=False, sheet_name='PEDIDO')
                         ws = writer.sheets['PEDIDO']
                         
-                        # Definición de Estilos
+                        # Estilos
                         fill = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
                         font_header = Font(color="FFFFFF", bold=True)
                         align_center = Alignment(horizontal="center", vertical="center")
                         border = Border(left=Side(style='thin'), right=Side(style='thin'), 
                                         top=Side(style='thin'), bottom=Side(style='thin'))
 
-                        # Aplicar Formato a Encabezados y Auto-Ajustar Columnas
+                        # Formato y Auto-Ajuste
                         for col_num, column in enumerate(df_final.columns, 1):
                             cell = ws.cell(row=1, column=col_num)
                             cell.fill = fill
@@ -99,20 +110,17 @@ if uploaded_file is not None:
                             cell.alignment = align_center
                             cell.border = border
                             
-                            # Ajuste dinámico de ancho (conversión a string obligatoria)
                             max_len = max(df_final[column].astype(str).map(len).max(), len(column)) + 5
                             ws.column_dimensions[ws.cell(row=1, column=col_num).column_letter].width = max_len
 
-                        # Aplicar bordes a todas las filas con datos
                         for row in ws.iter_rows(min_row=2, max_row=len(df_final)+1, max_col=7):
                             for cell in row:
                                 cell.border = border
                     
-                    # Preparar descarga
                     data_excel = output.getvalue()
                     
-                    # NOMBRE DE ARCHIVO SOLICITADO: PEDIDO BDG 64 MOTSUR TVS + FECHA
-                    fecha_hoy = datetime.now().strftime('%d-%m-%Y')
+                    # NOMBRE DE ARCHIVO SIN GUIONES (Espacios en su lugar)
+                    fecha_hoy = datetime.now().strftime('%d %m %Y')
                     nombre_archivo = f"PEDIDO BDG 64 MOTSUR TVS {fecha_hoy}.xlsx"
 
                     st.download_button(
@@ -122,6 +130,6 @@ if uploaded_file is not None:
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                     )
                 else:
-                    st.error("No se encontraron coincidencias en la base de datos.")
+                    st.error("No se encontraron coincidencias.")
     except Exception as e:
-        st.error(f"Error técnico detectado: {e}")
+        st.error(f"Error técnico: {e}")
