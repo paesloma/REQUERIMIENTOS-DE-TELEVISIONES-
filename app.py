@@ -7,32 +7,35 @@ from datetime import datetime
 # --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="Generador de Pedidos TCL", layout="wide")
 
-def limpiar_modelo(nombre_producto):
+def limpiar_modelo_7(nombre_producto):
+    """Extrae PL + 7 caracteres del modelo técnico"""
     if pd.isna(nombre_producto): return "S/N"
-    # Quitar TELEVISOR, extraer código y poner prefijo PL
+    # Eliminar TELEVISOR/TELEVISION
     temp = re.sub(r'TELEVISOR|TELEVISION', '', str(nombre_producto), flags=re.IGNORECASE).strip()
+    # Buscar el bloque alfanumérico del modelo
     match = re.search(r'([A-Z0-9]+)', temp)
     if match:
         modelo_base = match.group(1)
-        return f"PL-{modelo_base[:5]}"
+        # Ajustado a 7 caracteres según tu solicitud
+        return f"PL-{modelo_base[:7]}"
     return "OTROS"
 
 # --- INTERFAZ ---
-st.title("📊 Generador de Pedidos - Configuración Flexible")
+st.title("📊 Generador de Pedidos - Formato 7 Dígitos")
 
 st.subheader("1. Cargar Base de Datos de Excel")
 uploaded_file = st.file_uploader("Sube el archivo de control (.xlsx o .xls)", type=["xlsx", "xls"])
 
 if uploaded_file is not None:
     try:
-        # Leer Excel y obtener nombres de columnas reales
+        # Leer Excel y limpiar nombres de columnas de espacios
         df_master = pd.read_excel(uploaded_file)
         columnas_reales = [str(c).strip() for c in df_master.columns]
         df_master.columns = columnas_reales
         
-        st.info("Asigne las columnas de su Excel a los campos del reporte:")
+        st.info("Seleccione las columnas correspondientes de su archivo:")
         
-        # Selección manual de columnas para evitar errores de nombres
+        # Selección manual para asegurar que no falte ninguna columna (incluyendo Taller)
         c1, c2, c3 = st.columns(3)
         with c1:
             sel_orden = st.selectbox("Columna de ORDEN:", columnas_reales)
@@ -52,43 +55,43 @@ if uploaded_file is not None:
             if input_ordenes:
                 lista_busqueda = [o.strip() for o in input_ordenes.split('\n') if o.strip()]
                 
-                # Normalizar columna de orden para la comparación
+                # Normalizar columna de orden para evitar errores con .0
                 df_master[sel_orden] = df_master[sel_orden].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
                 
                 # Filtrar órdenes
                 df_res = df_master[df_master[sel_orden].isin(lista_busqueda)].copy()
 
                 if not df_res.empty:
-                    # Generar código PL
-                    df_res['CODIGO_PL'] = df_res[sel_modelo].apply(limpiar_modelo)
+                    # Generar código PL con 7 caracteres
+                    df_res['CODIGO_7'] = df_res[sel_modelo].apply(limpiar_modelo_7)
 
-                    # Crear DataFrame con el orden solicitado: 
-                    # 1. ORDEN, 2. SERIE, 3. MODELO, 4. TALLER, 5. REPUESTO, 6. CODIGO
+                    # Crear DataFrame final con el orden exacto solicitado:
+                    # 1.ORDEN, 2.SERIE, 3.MODELO, 4.TALLER, 5.REPUESTO, 6.CODIGO
                     df_final = pd.DataFrame({
                         'ORDEN': df_res[sel_orden],
                         'SERIE': df_res[sel_serie],
                         'MODELO': df_res[sel_modelo],
                         'TALLER DE PROCEDENCIA': df_res[sel_taller],
                         'REPUESTO': df_res[sel_repuesto],
-                        'CODIGO': df_res['CODIGO_PL']
+                        'CODIGO': df_res['CODIGO_7']
                     })
 
-                    st.subheader("3. Vista Previa del Pedido")
+                    st.subheader("3. Vista Previa (Código de 7 dígitos)")
                     st.dataframe(df_final, use_container_width=True)
 
-                    # Generar Excel para descarga
+                    # Generar Excel
                     output = io.BytesIO()
                     with pd.ExcelWriter(output, engine='openpyxl') as writer:
                         df_final.to_excel(writer, index=False, sheet_name='Pedido')
                     
                     st.download_button(
-                        label="📥 Descargar Excel Formateado",
+                        label="📥 Descargar Excel (7 Dígitos)",
                         data=output.getvalue(),
-                        file_name=f"Pedido_{datetime.now().strftime('%d_%m_%Y')}.xlsx",
+                        file_name=f"Pedido_7D_{datetime.now().strftime('%d_%m_%Y')}.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                     )
                 else:
-                    st.error("❌ No se encontraron las órdenes en el archivo subido.")
+                    st.error("❌ No se encontraron las órdenes en el archivo cargado.")
             else:
                 st.warning("⚠️ Pega los números de orden antes de procesar.")
 
