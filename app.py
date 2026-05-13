@@ -1,84 +1,106 @@
 import streamlit as st
 import pandas as pd
 import re
+import io
 from datetime import datetime
 
-# --- Configuración y Limpieza ---
-st.set_page_config(page_title="Generador de Pedidos", layout="wide")
+# --- CONFIGURACIÓN DE PÁGINA ---
+st.set_page_config(page_title="Control de Órdenes y Pedidos", layout="wide")
+
+# --- LÓGICA DE PROCESAMIENTO ---
 
 def limpiar_modelo(nombre_producto):
+    """
+    Transforma el nombre del producto: elimina 'TELEVISOR', 
+    añade prefijo 'PL-' y toma los primeros 5 caracteres del modelo.
+    """
     if pd.isna(nombre_producto):
         return "S/N"
-    # Quitar "TELEVISOR", extraer el código y poner prefijo PL
+    
+    # Eliminar la palabra TELEVISOR o TELEVISION
     temp = re.sub(r'TELEVISOR|TELEVISION', '', str(nombre_producto), flags=re.IGNORECASE).strip()
+    
+    # Buscar el primer bloque alfanumérico que represente el modelo
     match = re.search(r'([A-Z0-9]+)', temp)
     if match:
         modelo_base = match.group(1)
+        # Formato PL + 5 caracteres
         return f"PL-{modelo_base[:5]}"
+    
     return "OTROS"
 
 @st.cache_data
-def load_base_datos(file_path):
+def load_master_data(file_path):
+    """Carga la base de datos principal y estandariza la columna de orden."""
     df = pd.read_csv(file_path)
-    # Estandarizar nombre de columna de orden (ajustar según tu CSV real)
+    # Asegurar que #Orden sea tratado como texto para evitar problemas con ceros o formatos
     if '#Orden' in df.columns:
         df['#Orden'] = df['#Orden'].astype(str).str.strip()
     return df
 
-# --- Interfaz de Usuario ---
-st.title("📦 Generador de Pedidos por Lote")
-st.markdown("""
-### Instrucciones:
-1. Pega o escribe los números de orden en el cuadro de abajo (uno por línea).
-2. El sistema buscará la información y generará el formato **PL-XXXXX**.
-3. Descarga el archivo final con el botón.
-""")
+# --- INTERFAZ DE USUARIO ---
+
+st.title("📦 Sistema de Gestión de Pedidos - 2026")
 
 try:
-    # Cargar la base de datos principal
+    # Ruta del archivo (Asegúrate de que coincida con tu archivo en GitHub)
     base_path = "CONTROL ORDENES 2026 TVS TCL.xlsx - ORDENES 2026.csv"
-    df_master = load_base_datos(base_path)
+    df_master = load_master_data(base_path)
 
-    # --- CUADRO DE ENTRADA TIPO EXCEL (MANUAL) ---
-    st.subheader("1. Ingreso Manual de Órdenes")
-    input_ordenes = st.text_area(
-        "Pega aquí los números de orden (una por fila):",
-        placeholder="Ejemplo:\n28712\n28711\n28710",
-        height=200
-    )
+    # Tabs para organizar las funciones
+    tab1, tab2 = st.tabs(["Generar Pedido por Lote", "Vista General de Base"])
 
-    if input_ordenes:
-        # Convertir el texto ingresado en una lista limpia
-        lista_ordenes = [o.strip() for o in input_ordenes.split('\n') if o.strip()]
-        
-        # Filtrar la base de datos solo por las órdenes solicitadas
-        df_filtrado = df_master[df_master['#Orden'].isin(lista_ordenes)].copy()
+    with tab1:
+        st.subheader("1. Ingreso de Órdenes (Copia y pega desde Excel)")
+        input_ordenes = st.text_area(
+            "Pega aquí los números de orden (uno por línea):",
+            placeholder="Ejemplo:\n28712\n28711\n28710",
+            height=250
+        )
 
-        if not df_filtrado.empty:
-            # Aplicar la regla del código PL a los resultados encontrados
-            df_filtrado['CODIGO_PEDIDO'] = df_filtrado['Producto'].apply(limpiar_modelo)
+        if input_ordenes:
+            # Procesar la lista ingresada
+            lista_solicitada = [o.strip() for o in input_ordenes.split('\n') if o.strip()]
             
-            # Reordenar columnas para que el código PL sea visible al inicio
-            columnas_finales = ['#Orden', 'CODIGO_PEDIDO', 'Producto', 'Fecha', 'Repuestos', 'Estado']
-            df_mostrar = df_filtrado[columnas_finales]
+            # Filtrar en la base de datos
+            df_resultado = df_master[df_master['#Orden'].isin(lista_solicitada)].copy()
 
-            st.success(f"✅ Se encontraron {len(df_filtrado)} órdenes de las {len(lista_ordenes)} ingresadas.")
-            
-            # --- VISTA PREVIA Y DESCARGA ---
-            st.subheader("2. Vista Previa del Pedido")
-            st.dataframe(df_mostrar, use_container_width=True)
+            if not df_resultado.empty:
+                # Aplicar transformación de modelos
+                df_resultado['CODIGO_PEDIDO'] = df_resultado['Producto'].apply(limpiar_modelo)
+                
+                # Seleccionar y ordenar columnas para el reporte
+                columnas_reporte = ['#Orden', 'CODIGO_PEDIDO', 'Producto', 'Fecha', 'Repuestos', 'Técnico', 'Estado']
+                df_final = df_resultado[columnas_reporte]
 
-            csv_pedido = df_mostrar.to_csv(index=False).encode('utf-8')
-            
-            st.download_button(
-                label="📥 Descargar Lista de Pedido (CSV)",
-                data=csv_pedido,
-                file_name=f"pedido_generado_{datetime.now().strftime('%H%M%S')}.csv",
-                mime="text/csv",
-                type="primary"
-            )
-        else:
-            st.error("❌ No se encontró ninguna de las órdenes ingresadas en la base de datos.")
+                st.success(f"✅ Se encontraron {len(df_final)} órdenes de las {len(lista_solicitada)} ingresadas.")
+                
+                # Mostrar vista previa
+                st.dataframe(df_final, use_container_width=True)
 
+                # --- LÓGICA DE DESCARGA EXCEL ---
+                buffer = io.BytesIO()
+                with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+                    df_final.to_excel(writer, index=False, sheet_name='Pedido_Generado')
+                
+                buffer.seek(0)
+
+                st.download_button(
+                    label="📥 Descargar Pedido en EXCEL (.xlsx)",
+                    data=buffer,
+                    file_name=f"pedido_tcl_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    type="primary"
+                )
+            else:
+                st.error("❌ Ningún número de orden coincide con la base de datos.")
+
+    with tab2:
+        st.subheader("Explorador de Datos")
+        st.write("Muestra las primeras 100 filas de la base de datos cargada.")
+        st.dataframe(df_master.head(100), use_container_width=True)
+
+except FileNotFoundError:
+    st.error("⚠️ No se encontró el archivo CSV. Verifica que el nombre en GitHub sea exacto.")
 except Exception as e:
-    st.error(f"Hubo un error al procesar el archivo: {e}")
+    st.error(f"Ocurrió un error inesperado: {e}")
