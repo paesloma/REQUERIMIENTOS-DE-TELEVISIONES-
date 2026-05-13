@@ -5,11 +5,10 @@ import io
 from datetime import datetime
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 
-# --- CONFIGURACIÓN DE PÁGINA ---
-st.set_page_config(page_title="Generador de Pedidos TCL", layout="wide")
+# --- CONFIGURACIÓN ---
+st.set_page_config(page_title="Generador de Pedidos Pro", layout="wide")
 
 def extraer_codigo_final(nombre_producto):
-    """Limpia '4K', busca el primer número y extrae 5 caracteres (Formato PLXXXXX)"""
     if pd.isna(nombre_producto): return "S/N"
     nombre_str = str(nombre_producto).upper()
     nombre_str = re.sub(r'\s+4K\s+', ' ', nombre_str)
@@ -22,8 +21,7 @@ def extraer_codigo_final(nombre_producto):
 
 st.title("📊 Generador de Pedidos Profesional")
 
-st.subheader("1. Cargar Base de Datos de Excel")
-uploaded_file = st.file_uploader("Sube el archivo de control (.xlsx o .xls)", type=["xlsx", "xls"])
+uploaded_file = st.file_uploader("Sube el archivo de Excel", type=["xlsx", "xls"])
 
 if uploaded_file is not None:
     try:
@@ -37,7 +35,7 @@ if uploaded_file is not None:
                     return i
             return 0
 
-        st.info("Selección automática de columnas completada:")
+        st.info("Asigne las columnas para el reporte:")
         c1, c2 = st.columns(2)
         with c1:
             sel_orden = st.selectbox("1. ORDEN:", columnas_reales, index=detectar(['ORDEN', '#']))
@@ -49,10 +47,9 @@ if uploaded_file is not None:
             sel_repuesto = st.selectbox("6. REPUESTO:", columnas_reales, index=detectar(['REPUESTO']))
 
         st.divider()
-        st.subheader("2. Selección de Órdenes")
-        input_ordenes = st.text_area("Pega aquí los números de orden:", height=150)
+        input_ordenes = st.text_area("Pegue las órdenes aquí:", height=150)
 
-        if st.button("🚀 Generar Pedido con Formato Profesional", type="primary"):
+        if st.button("🚀 Procesar y Formatear Excel", type="primary"):
             if input_ordenes:
                 lista_busqueda = [o.strip() for o in input_ordenes.split('\n') if o.strip()]
                 df_master[sel_orden] = df_master[sel_orden].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
@@ -61,7 +58,6 @@ if uploaded_file is not None:
                 if not df_res.empty:
                     df_res['CODIGO_PL'] = df_res[sel_modelo].apply(extraer_codigo_final)
                     
-                    # Estructura final de 7 columnas
                     df_final = pd.DataFrame({
                         'ORDEN': df_res[sel_orden],
                         'SERIE': df_res[sel_serie],
@@ -72,47 +68,47 @@ if uploaded_file is not None:
                         'CODIGO': df_res['CODIGO_PL']
                     })
 
-                    st.subheader("3. Vista Previa")
                     st.dataframe(df_final, use_container_width=True)
 
-                    # --- EXPORTACIÓN CON FORMATO ESTÉTICO ---
+                    # --- CREACIÓN DEL EXCEL ESTILIZADO ---
                     output = io.BytesIO()
+                    # Especificamos explícitamente el motor 'openpyxl'
                     with pd.ExcelWriter(output, engine='openpyxl') as writer:
                         df_final.to_excel(writer, index=False, sheet_name='PEDIDO')
-                        
                         ws = writer.sheets['PEDIDO']
                         
-                        # Definir estilos
-                        blue_fill = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
-                        white_font = Font(color="FFFFFF", bold=True)
-                        alignment = Alignment(horizontal="center", vertical="center")
+                        # Estilos
+                        fill = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
+                        font = Font(color="FFFFFF", bold=True)
+                        align = Alignment(horizontal="center", vertical="center")
                         border = Border(left=Side(style='thin'), right=Side(style='thin'), 
                                         top=Side(style='thin'), bottom=Side(style='thin'))
 
-                        # Aplicar estilos a cabeceras y auto-ajustar ancho
                         for col_num, column in enumerate(df_final.columns, 1):
                             cell = ws.cell(row=1, column=col_num)
-                            cell.fill = blue_fill
-                            cell.font = white_font
-                            cell.alignment = alignment
+                            cell.fill = fill
+                            cell.font = font
+                            cell.alignment = align
                             cell.border = border
                             
-                            # Lógica de auto-ajuste de columna
-                            max_len = max(df_final[column].astype(str).map(len).max(), len(column)) + 4
+                            # Ajustar ancho automáticamente
+                            max_len = max(df_final[column].astype(str).map(len).max(), len(column)) + 5
                             ws.column_dimensions[ws.cell(row=1, column=col_num).column_letter].width = max_len
 
-                        # Aplicar bordes a los datos
                         for row in ws.iter_rows(min_row=2, max_row=len(df_final)+1, max_col=7):
                             for cell in row:
                                 cell.border = border
+                    
+                    # Importante: getvalue() obtiene los datos del buffer correctamente
+                    data_excel = output.getvalue()
 
                     st.download_button(
-                        label="📥 Descargar Excel Estilizado",
-                        data=output.getvalue(),
-                        file_name=f"Pedido_TCL_Pro_{datetime.now().strftime('%H%M_%d%m%y')}.xlsx",
+                        label="📥 Descargar Excel con Formato",
+                        data=data_excel,
+                        file_name=f"Pedido_TCL_{datetime.now().strftime('%d_%m_%y')}.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                     )
                 else:
-                    st.error("❌ No se encontraron las órdenes.")
+                    st.error("No se encontraron coincidencias.")
     except Exception as e:
         st.error(f"Error técnico: {e}")
