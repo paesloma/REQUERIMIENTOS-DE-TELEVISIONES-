@@ -11,7 +11,9 @@ st.set_page_config(page_title="Generador de Pedidos TCL", layout="wide")
 def limpiar_modelo(nombre_producto):
     if pd.isna(nombre_producto):
         return "S/N"
+    # Eliminar "TELEVISOR" o "TELEVISION"
     temp = re.sub(r'TELEVISOR|TELEVISION', '', str(nombre_producto), flags=re.IGNORECASE).strip()
+    # Buscar bloque alfanumérico (ej: 65P755)
     match = re.search(r'([A-Z0-9]+)', temp)
     if match:
         modelo_base = match.group(1)
@@ -19,78 +21,89 @@ def limpiar_modelo(nombre_producto):
     return "OTROS"
 
 # --- INTERFAZ DE USUARIO ---
-st.title("📊 Generador de Pedidos - Formato Requerido")
+st.title("📊 Generador de Pedidos - Procesamiento por Botón")
 
+# 1. CARGA DEL ARCHIVO EXCEL
 st.subheader("1. Cargar Base de Datos (.xlsx o .xls)")
 uploaded_file = st.file_uploader("Sube el archivo de control de órdenes", type=["xlsx", "xls"])
 
 if uploaded_file is not None:
     try:
-        # Leer el archivo Excel y limpiar nombres de columnas
+        # Leer el archivo y limpiar nombres de columnas de espacios laterales
         df_master = pd.read_excel(uploaded_file)
         df_master.columns = [str(c).strip() for c in df_master.columns]
         
-        # BUSCAR COLUMNA DE ORDEN (flexible)
-        posibles_nombres = ['#Orden', 'ORDEN', '# ORDEN', 'Nro Orden', 'Orden']
+        # BUSCAR COLUMNA DE ORDEN (Flexible a variaciones)
+        posibles_nombres = ['#Orden', 'ORDEN', '# ORDEN', 'Nro Orden', 'Orden', 'CODIGO']
         col_orden = next((c for c in posibles_nombres if c in df_master.columns), None)
 
         if col_orden:
-            # Limpiar datos de la columna de orden
-            df_master[col_orden] = df_master[col_orden].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
-            st.success(f"✅ Base de datos cargada. Columna detectada: '{col_orden}'")
-
+            st.success(f"✅ Archivo cargado. Columna identificada: '{col_orden}'")
+            
             st.divider()
-            st.subheader("2. Ingrese Lista de Órdenes para el Pedido")
+            
+            # 2. INGRESO MANUAL Y BOTÓN DE PROCESAR
+            st.subheader("2. Selección de Órdenes")
             input_ordenes = st.text_area(
-                "Pegue aquí las órdenes (una por línea):",
+                "Pegue aquí los números de orden (uno por línea):",
                 placeholder="28712\n28711",
                 height=200
             )
 
-            if input_ordenes:
-                lista_solicitada = [o.strip() for o in input_ordenes.split('\n') if o.strip()]
-                df_resultado = df_master[df_master[col_orden].isin(lista_solicitada)].copy()
-
-                if not df_resultado.empty:
-                    # Crear columnas necesarias si no existen
-                    if 'Serie' not in df_resultado.columns: df_resultado['Serie'] = "N/A"
-                    if 'Técnico' not in df_resultado.columns: df_resultado['Técnico'] = "N/A"
-                    if 'Repuestos' not in df_resultado.columns: df_resultado['Repuestos'] = "N/A"
+            # Botón para ejecutar la búsqueda
+            if st.button("🚀 Procesar Pedido", type="secondary"):
+                if input_ordenes:
+                    # Limpiar lista de entrada
+                    lista_solicitada = [o.strip() for o in input_ordenes.split('\n') if o.strip()]
                     
-                    # Generar Código PL
-                    df_resultado['CODIGO_PL'] = df_resultado['Producto'].apply(limpiar_modelo)
+                    # Convertir columna de la base a texto para comparar
+                    df_master[col_orden] = df_master[col_orden].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
                     
-                    # RENOMBRAR Y ORDENAR SEGÚN REQUERIMIENTO
-                    df_final = df_resultado.rename(columns={
-                        col_orden: 'ORDEN',
-                        'Serie': 'SERIE',
-                        'Producto': 'MODELO',
-                        'Técnico': 'TALLER DE PROCEDENCIA',
-                        'Repuestos': 'REPUESTO'
-                    })[['ORDEN', 'SERIE', 'MODELO', 'TALLER DE PROCEDENCIA', 'REPUESTO', 'CODIGO_PL']]
+                    # Filtrar
+                    df_resultado = df_master[df_master[col_orden].isin(lista_solicitada)].copy()
 
-                    st.subheader("3. Vista Previa del Nuevo Archivo")
-                    st.dataframe(df_final, use_container_width=True)
+                    if not df_resultado.empty:
+                        # Asegurar existencia de columnas para evitar errores de visualización
+                        cols_necesarias = {'Serie': 'SERIE', 'Producto': 'MODELO', 'Técnico': 'TALLER DE PROCEDENCIA', 'Repuestos': 'REPUESTO'}
+                        for original, nuevo in cols_necesarias.items():
+                            if original not in df_resultado.columns:
+                                df_resultado[original] = "N/A"
+                        
+                        # Generar el Código PL
+                        df_resultado['CODIGO_PL'] = df_resultado['Producto'].apply(limpiar_modelo)
+                        
+                        # Reordenar y renombrar según tu requerimiento exacto
+                        df_final = df_resultado.rename(columns={
+                            col_orden: 'ORDEN',
+                            'Serie': 'SERIE',
+                            'Producto': 'MODELO',
+                            'Técnico': 'TALLER DE PROCEDENCIA',
+                            'Repuestos': 'REPUESTO'
+                        })[['ORDEN', 'SERIE', 'MODELO', 'TALLER DE PROCEDENCIA', 'REPUESTO', 'CODIGO_PL']]
 
-                    # GENERACIÓN DEL EXCEL
-                    buffer = io.BytesIO()
-                    with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-                        df_final.to_excel(writer, index=False, sheet_name='PEDIDO_TCL')
-                    buffer.seek(0)
+                        st.subheader("3. Resultado del Procesamiento")
+                        st.dataframe(df_final, use_container_width=True)
 
-                    st.download_button(
-                        label="📥 DESCARGAR EXCEL (ORDEN SOLICITADO)",
-                        data=buffer,
-                        file_name=f"Pedido_Formato_{datetime.now().strftime('%d_%m_%Y')}.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        type="primary"
-                    )
+                        # GENERACIÓN DE EXCEL PARA DESCARGAR
+                        buffer = io.BytesIO()
+                        with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+                            df_final.to_excel(writer, index=False, sheet_name='PEDIDO')
+                        buffer.seek(0)
+
+                        st.download_button(
+                            label="📥 DESCARGAR EXCEL",
+                            data=buffer,
+                            file_name=f"Pedido_TCL_{datetime.now().strftime('%d_%m_%Y')}.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                        )
+                    else:
+                        st.error("❌ No se encontraron coincidencias. Revise si los números de orden son correctos.")
                 else:
-                    st.warning("⚠️ No se encontraron las órdenes en el archivo cargado. Verifique que los números coincidan.")
+                    st.warning("⚠️ Por favor, pegue al menos un número de orden antes de procesar.")
         else:
-            st.error(f"❌ No se encontró la columna '#Orden'. Las columnas detectadas son: {list(df_master.columns)}")
+            st.error(f"❌ No se encontró la columna de orden. Columnas en su archivo: {list(df_master.columns)}")
 
     except Exception as e:
-        st.error(f"Ocurrió un error: {e}")
+        st.error(f"Error técnico: {e}")
 else:
-    st.info("Cargue el archivo Excel para activar el procesador.")
+    st.info("👋 Bienvenida/o. Por favor, cargue su archivo de Excel para iniciar.")
