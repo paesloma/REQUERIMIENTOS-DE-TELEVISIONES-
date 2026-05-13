@@ -3,60 +3,44 @@ import pandas as pd
 import re
 import io
 from datetime import datetime
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 
 # --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="Generador de Pedidos TCL", layout="wide")
 
 def extraer_codigo_final(nombre_producto):
-    """
-    1. Excluye '4K' si está entre espacios.
-    2. Busca el primer dígito numérico.
-    3. Extrae 5 caracteres y devuelve el código SIN guion (PLXXXXX).
-    """
+    """Limpia '4K', busca el primer número y extrae 5 caracteres (Formato PLXXXXX)"""
     if pd.isna(nombre_producto): return "S/N"
-    
     nombre_str = str(nombre_producto).upper()
-    
-    # Exclusión de '4K' con dos separadores de espacio
     nombre_str = re.sub(r'\s+4K\s+', ' ', nombre_str)
-    
-    # Buscar el primer carácter numérico
     match_numero = re.search(r'\d', nombre_str)
-    
     if match_numero:
         inicio = match_numero.start()
-        # Extraer 5 caracteres a partir del primer número
         bloque = nombre_str[inicio:inicio+5]
-        # Retorna el código completo sin guion
         return f"PL{bloque}"
-    
     return "SIN_MODELO"
 
-# --- INTERFAZ DE USUARIO ---
-st.title("📊 Generador de Pedidos - Formato Final Sin Guion")
+st.title("📊 Generador de Pedidos Profesional")
 
 st.subheader("1. Cargar Base de Datos de Excel")
 uploaded_file = st.file_uploader("Sube el archivo de control (.xlsx o .xls)", type=["xlsx", "xls"])
 
 if uploaded_file is not None:
     try:
-        # Leer Excel y limpiar nombres de columnas
         df_master = pd.read_excel(uploaded_file)
         columnas_reales = [str(c).strip() for c in df_master.columns]
         df_master.columns = columnas_reales
         
-        # LÓGICA DE DETECCIÓN AUTOMÁTICA
-        def detectar(keywords, default_idx=0):
+        def detectar(keywords):
             for i, col in enumerate(columnas_reales):
                 if any(k.upper() in col.upper() for k in keywords):
                     return i
-            return default_idx
+            return 0
 
-        st.info("El sistema ha pre-seleccionado las columnas. Verifique antes de procesar:")
-        
+        st.info("Selección automática de columnas completada:")
         c1, c2 = st.columns(2)
         with c1:
-            sel_orden = st.selectbox("1. ORDEN:", columnas_reales, index=detectar(['#ORDEN', 'ORDEN']))
+            sel_orden = st.selectbox("1. ORDEN:", columnas_reales, index=detectar(['ORDEN', '#']))
             sel_serie = st.selectbox("2. SERIE:", columnas_reales, index=detectar(['SERIE']))
             sel_modelo = st.selectbox("3. MODELO:", columnas_reales, index=detectar(['PRODUCTO', 'MODELO']))
         with c2:
@@ -66,25 +50,18 @@ if uploaded_file is not None:
 
         st.divider()
         st.subheader("2. Selección de Órdenes")
-        input_ordenes = st.text_area("Pega aquí los números de orden (uno por línea):", height=200)
+        input_ordenes = st.text_area("Pega aquí los números de orden:", height=150)
 
-        # BOTÓN PROCESAR
-        if st.button("🚀 Procesar Pedido", type="primary"):
+        if st.button("🚀 Generar Pedido con Formato Profesional", type="primary"):
             if input_ordenes:
                 lista_busqueda = [o.strip() for o in input_ordenes.split('\n') if o.strip()]
-                
-                # Normalización de la columna de orden
                 df_master[sel_orden] = df_master[sel_orden].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
-                
-                # Filtrar órdenes
                 df_res = df_master[df_master[sel_orden].isin(lista_busqueda)].copy()
 
                 if not df_res.empty:
-                    # Generar código PLXXXXX (Sin guion)
                     df_res['CODIGO_PL'] = df_res[sel_modelo].apply(extraer_codigo_final)
-
-                    # CONSTRUCCIÓN DE LAS 7 COLUMNAS EN EL ORDEN SOLICITADO
-                    # ORDEN, SERIE, MODELO, TALLER DE PROCEDENCIA, TALLER, REPUESTO, CODIGO
+                    
+                    # Estructura final de 7 columnas
                     df_final = pd.DataFrame({
                         'ORDEN': df_res[sel_orden],
                         'SERIE': df_res[sel_serie],
@@ -95,26 +72,47 @@ if uploaded_file is not None:
                         'CODIGO': df_res['CODIGO_PL']
                     })
 
-                    st.subheader("3. Vista Previa del Pedido")
+                    st.subheader("3. Vista Previa")
                     st.dataframe(df_final, use_container_width=True)
 
-                    # Generar Excel para descarga
+                    # --- EXPORTACIÓN CON FORMATO ESTÉTICO ---
                     output = io.BytesIO()
                     with pd.ExcelWriter(output, engine='openpyxl') as writer:
                         df_final.to_excel(writer, index=False, sheet_name='PEDIDO')
-                    
+                        
+                        ws = writer.sheets['PEDIDO']
+                        
+                        # Definir estilos
+                        blue_fill = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
+                        white_font = Font(color="FFFFFF", bold=True)
+                        alignment = Alignment(horizontal="center", vertical="center")
+                        border = Border(left=Side(style='thin'), right=Side(style='thin'), 
+                                        top=Side(style='thin'), bottom=Side(style='thin'))
+
+                        # Aplicar estilos a cabeceras y auto-ajustar ancho
+                        for col_num, column in enumerate(df_final.columns, 1):
+                            cell = ws.cell(row=1, column=col_num)
+                            cell.fill = blue_fill
+                            cell.font = white_font
+                            cell.alignment = alignment
+                            cell.border = border
+                            
+                            # Lógica de auto-ajuste de columna
+                            max_len = max(df_final[column].astype(str).map(len).max(), len(column)) + 4
+                            ws.column_dimensions[ws.cell(row=1, column=col_num).column_letter].width = max_len
+
+                        # Aplicar bordes a los datos
+                        for row in ws.iter_rows(min_row=2, max_row=len(df_final)+1, max_col=7):
+                            for cell in row:
+                                cell.border = border
+
                     st.download_button(
-                        label="📥 Descargar Excel (7 Columnas)",
+                        label="📥 Descargar Excel Estilizado",
                         data=output.getvalue(),
-                        file_name=f"Pedido_TCL_SinGuion_{datetime.now().strftime('%d_%m_%y')}.xlsx",
+                        file_name=f"Pedido_TCL_Pro_{datetime.now().strftime('%H%M_%d%m%y')}.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                     )
                 else:
-                    st.error("❌ No se encontraron las órdenes en el archivo cargado.")
-            else:
-                st.warning("⚠️ Pegue los números de orden antes de procesar.")
-
+                    st.error("❌ No se encontraron las órdenes.")
     except Exception as e:
         st.error(f"Error técnico: {e}")
-else:
-    st.info("Suba el archivo de Excel para iniciar la detección automática.")
