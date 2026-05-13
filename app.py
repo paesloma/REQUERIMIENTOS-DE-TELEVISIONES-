@@ -6,41 +6,40 @@ from datetime import datetime
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 
 # --- CONFIGURACIÓN DE PÁGINA ---
-st.set_page_config(page_title="Generador de Pedidos Pro", layout="wide")
+st.set_page_config(page_title="Generador de Pedidos MOTSUR", layout="wide")
 
 def extraer_codigo_final(nombre_producto):
     """
-    1. Excluye '4K' si está entre espacios.
-    2. Busca el primer dígito numérico.
-    3. Extrae 5 caracteres y devuelve el código SIN guion (PLXXXXX).
+    Limpia el nombre del producto eliminando espacios, guiones y '4K',
+    luego extrae 5 caracteres a partir del primer número.
     """
     if pd.isna(nombre_producto): return "S/N"
     
-    nombre_str = str(nombre_producto).upper()
+    # Limpieza total de espacios y guiones en el texto
+    nombre_str = str(nombre_producto).upper().replace(" ", "").replace("-", "")
     
-    # Exclusión de '4K' con separadores de espacio
-    nombre_str = re.sub(r'\s+4K\s+', ' ', nombre_str)
+    # Eliminar '4K' si está presente
+    nombre_str = nombre_str.replace("4K", "")
     
-    # Buscar el primer carácter numérico
+    # Buscar el primer dígito numérico
     match_numero = re.search(r'\d', nombre_str)
     
     if match_numero:
         inicio = match_numero.start()
-        # Extraer 5 caracteres a partir del primer número
+        # Extraer bloque de 5 caracteres
         bloque = nombre_str[inicio:inicio+5]
-        # Retorna el código completo sin guiones
         return f"PL{bloque}"
     
-    return "SIN_MODELO"
+    return "SINMODELO"
 
-st.title("📊 Generador de Pedidos - Formato MOTSUR (Sin Guiones)")
+st.title("📊 Generador de Pedidos - Sin Espacios ni Guiones")
 
-uploaded_file = st.file_uploader("Sube el archivo de Excel de control", type=["xlsx", "xls"])
+uploaded_file = st.file_uploader("Sube el archivo Excel de control", type=["xlsx", "xls"])
 
 if uploaded_file is not None:
     try:
         df_master = pd.read_excel(uploaded_file)
-        # Limpiar espacios en los nombres de las columnas
+        # Limpieza de nombres de columnas
         df_master.columns = [str(c).strip() for c in df_master.columns]
         columnas_reales = list(df_master.columns)
         
@@ -50,7 +49,7 @@ if uploaded_file is not None:
                     return i
             return 0
 
-        st.info("Verifique la detección de columnas:")
+        st.info("Configuración de Columnas:")
         c1, c2 = st.columns(2)
         with c1:
             sel_orden = st.selectbox("1. ORDEN:", columnas_reales, index=detectar(['ORDEN', '#']))
@@ -64,16 +63,17 @@ if uploaded_file is not None:
         st.divider()
         input_ordenes = st.text_area("Pegue las órdenes aquí (una por línea):", height=150)
 
-        if st.button("🚀 Procesar Pedido Profesional", type="primary"):
+        if st.button("🚀 Procesar y Generar Excel", type="primary"):
             if input_ordenes:
                 lista_busqueda = [o.strip() for o in input_ordenes.split('\n') if o.strip()]
-                # Asegurar que la columna de orden sea texto y no tenga decimales .0
+                # Normalizar la columna de búsqueda
                 df_master[sel_orden] = df_master[sel_orden].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
                 df_res = df_master[df_master[sel_orden].isin(lista_busqueda)].copy()
 
                 if not df_res.empty:
                     df_res['CODIGO_PL'] = df_res[sel_modelo].apply(extraer_codigo_final)
                     
+                    # Estructura de salida
                     df_final = pd.DataFrame({
                         'ORDEN': df_res[sel_orden],
                         'SERIE': df_res[sel_serie],
@@ -84,44 +84,45 @@ if uploaded_file is not None:
                         'CODIGO': df_res['CODIGO_PL']
                     })
 
-                    # Rellenar celdas vacías con "REVISAR"
+                    # Rellenar vacíos para evitar errores de medición de celdas
                     df_final = df_final.fillna("REVISAR")
 
                     st.dataframe(df_final, use_container_width=True)
 
-                    # --- CREACIÓN DEL EXCEL ESTILIZADO ---
+                    # --- DISEÑO DEL EXCEL ---
                     output = io.BytesIO()
                     with pd.ExcelWriter(output, engine='openpyxl') as writer:
                         df_final.to_excel(writer, index=False, sheet_name='PEDIDO')
                         ws = writer.sheets['PEDIDO']
                         
                         # Estilos
-                        fill = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
-                        font_header = Font(color="FFFFFF", bold=True)
-                        align_center = Alignment(horizontal="center", vertical="center")
-                        border = Border(left=Side(style='thin'), right=Side(style='thin'), 
-                                        top=Side(style='thin'), bottom=Side(style='thin'))
+                        header_fill = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
+                        header_font = Font(color="FFFFFF", bold=True)
+                        center_align = Alignment(horizontal="center", vertical="center")
+                        thin_border = Border(left=Side(style='thin'), right=Side(style='thin'), 
+                                           top=Side(style='thin'), bottom=Side(style='thin'))
 
-                        # Formato y Auto-Ajuste
+                        # Aplicar formatos y auto-ajuste
                         for col_num, column in enumerate(df_final.columns, 1):
                             cell = ws.cell(row=1, column=col_num)
-                            cell.fill = fill
-                            cell.font = font_header
-                            cell.alignment = align_center
-                            cell.border = border
+                            cell.fill = header_fill
+                            cell.font = header_font
+                            cell.alignment = center_align
+                            cell.border = thin_border
                             
+                            # Medir ancho convirtiendo a string (evita error float)
                             max_len = max(df_final[column].astype(str).map(len).max(), len(column)) + 5
                             ws.column_dimensions[ws.cell(row=1, column=col_num).column_letter].width = max_len
 
                         for row in ws.iter_rows(min_row=2, max_row=len(df_final)+1, max_col=7):
                             for cell in row:
-                                cell.border = border
-                    
+                                cell.border = thin_border
+
                     data_excel = output.getvalue()
                     
-                    # NOMBRE DE ARCHIVO SIN GUIONES (Espacios en su lugar)
-                    fecha_hoy = datetime.now().strftime('%d %m %Y')
-                    nombre_archivo = f"PEDIDO BDG 64 MOTSUR TVS {fecha_hoy}.xlsx"
+                    # NOMBRE DE ARCHIVO: PEDIDO BDG 64 MOTSUR TVS + FECHA CONTINUA
+                    fecha_str = datetime.now().strftime('%d%m%Y')
+                    nombre_archivo = f"PEDIDO BDG 64 MOTSUR TVS {fecha_str}.xlsx"
 
                     st.download_button(
                         label="📥 Descargar Excel MOTSUR TVS",
@@ -130,6 +131,6 @@ if uploaded_file is not None:
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                     )
                 else:
-                    st.error("No se encontraron coincidencias.")
+                    st.error("No se encontraron las órdenes indicadas.")
     except Exception as e:
         st.error(f"Error técnico: {e}")
