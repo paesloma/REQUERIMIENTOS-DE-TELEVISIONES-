@@ -18,7 +18,7 @@ def limpiar_modelo(nombre_producto):
     return "OTROS"
 
 # --- INTERFAZ ---
-st.title("📊 Generador de Pedidos - Formato 7 Columnas")
+st.title("📊 Generador de Pedidos - Formato Final 7 Columnas")
 
 st.subheader("1. Cargar Base de Datos de Excel")
 uploaded_file = st.file_uploader("Sube el archivo de control (.xlsx o .xls)", type=["xlsx", "xls"])
@@ -30,9 +30,9 @@ if uploaded_file is not None:
         columnas_reales = [str(c).strip() for c in df_master.columns]
         df_master.columns = columnas_reales
         
-        st.info("Asigne las columnas de su archivo a los 7 campos requeridos:")
+        st.info("Asigne las columnas de su archivo a los campos correspondientes:")
         
-        # Mapeo manual de las 7 columnas solicitadas
+        # Mapeo manual de las columnas
         c1, c2 = st.columns(2)
         with c1:
             sel_orden = st.selectbox("1. Columna de ORDEN:", columnas_reales)
@@ -43,7 +43,7 @@ if uploaded_file is not None:
             sel_taller = st.selectbox("5. Columna TALLER:", columnas_reales)
             sel_repuesto = st.selectbox("6. Columna REPUESTO:", columnas_reales)
             
-        st.caption("Nota: La columna 7 (CODIGO) se genera automáticamente como PL-XXXXX")
+        st.caption("Nota: La columna 7 (CODIGO) se genera automáticamente a partir del Modelo.")
 
         st.divider()
         st.subheader("2. Selección de Órdenes")
@@ -52,6 +52,7 @@ if uploaded_file is not None:
         # Botón Procesar
         if st.button("🚀 Procesar Pedido", type="primary"):
             if input_ordenes:
+                # Limpiar lista de entrada
                 lista_busqueda = [o.strip() for o in input_ordenes.split('\n') if o.strip()]
                 
                 # Normalizar columna de orden (quitar .0 si existe)
@@ -61,10 +62,10 @@ if uploaded_file is not None:
                 df_res = df_master[df_master[sel_orden].isin(lista_busqueda)].copy()
 
                 if not df_res.empty:
-                    # Generar código PL
-                    df_res['CODIGO_PL'] = df_res[sel_modelo].apply(limpiar_modelo)
+                    # Generar el código PL (Columna 7)
+                    df_res['CODIGO_GENERADO'] = df_res[sel_modelo].apply(limpiar_modelo)
 
-                    # CONSTRUCCIÓN DE LAS 7 COLUMNAS EN EL ORDEN SOLICITADO
+                    # CONSTRUCCIÓN DEL DATAFRAME CON LAS 7 COLUMNAS EN ORDEN
                     df_final = pd.DataFrame({
                         'ORDEN': df_res[sel_orden],
                         'SERIE': df_res[sel_serie],
@@ -72,10 +73,10 @@ if uploaded_file is not None:
                         'TALLER DE PROCEDENCIA': df_res[sel_procedencia],
                         'TALLER': df_res[sel_taller],
                         'REPUESTO': df_res[sel_repuesto],
-                        'CODIGO': df_res['CODIGO_PL']
+                        'CODIGO': df_res['CODIGO_GENERADO']
                     })
 
-                    st.subheader("3. Vista Previa del Pedido")
+                    st.subheader("3. Vista Previa del Archivo Resultante")
                     st.dataframe(df_final, use_container_width=True)
 
                     # Generar Excel para descarga
@@ -86,7 +87,7 @@ if uploaded_file is not None:
                     st.download_button(
                         label="📥 Descargar Excel (7 Columnas)",
                         data=output.getvalue(),
-                        file_name=f"Pedido_TCL_{datetime.now().strftime('%d_%m_%Y')}.xlsx",
+                        file_name=f"Pedido_Final_{datetime.now().strftime('%d_%m_%Y')}.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                     )
                 else:
@@ -97,4 +98,4 @@ if uploaded_file is not None:
     except Exception as e:
         st.error(f"Error al procesar: {e}")
 else:
-    st.info("Cargue el archivo Excel para configurar las columnas y generar el reporte.")
+    st.info("Cargue el archivo Excel para configurar las columnas.")
