@@ -8,38 +8,42 @@ from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 # --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="Generador de Pedidos MOTSUR", layout="wide")
 
+# Diccionario de costos por pulgadas
+COSTOS_REPUESTOS = {
+    '43': 130,
+    '50': 150,
+    '55': 170,
+    '65': 240,
+    '75': 350,
+    '85': 700
+}
+
 def extraer_codigo_final(nombre_producto):
-    """
-    Limpia el nombre del producto eliminando espacios, guiones y '4K',
-    luego extrae 5 caracteres a partir del primer número.
-    """
     if pd.isna(nombre_producto): return "S/N"
-    
-    # Limpieza total de espacios y guiones en el texto
     nombre_str = str(nombre_producto).upper().replace(" ", "").replace("-", "")
-    
-    # Eliminar '4K' si está presente
     nombre_str = nombre_str.replace("4K", "")
-    
-    # Buscar el primer dígito numérico
     match_numero = re.search(r'\d', nombre_str)
-    
     if match_numero:
         inicio = match_numero.start()
-        # Extraer bloque de 5 caracteres
         bloque = nombre_str[inicio:inicio+5]
         return f"PL{bloque}"
-    
     return "SINMODELO"
 
-st.title("📊 Generador de Pedidos - Sin Espacios ni Guiones")
+def calcular_costo_item(modelo):
+    """Detecta las pulgadas en el modelo y retorna el costo."""
+    modelo_str = str(modelo)
+    for pulgada, costo in COSTOS_REPUESTOS.items():
+        if pulgada in modelo_str:
+            return costo
+    return 0  # Si no detecta pulgadas conocidas
+
+st.title("📊 Generador de Pedidos - Control de Presupuesto ($2600)")
 
 uploaded_file = st.file_uploader("Sube el archivo Excel de control", type=["xlsx", "xls"])
 
 if uploaded_file is not None:
     try:
         df_master = pd.read_excel(uploaded_file)
-        # Limpieza de nombres de columnas
         df_master.columns = [str(c).strip() for c in df_master.columns]
         columnas_reales = list(df_master.columns)
         
@@ -63,17 +67,32 @@ if uploaded_file is not None:
         st.divider()
         input_ordenes = st.text_area("Pegue las órdenes aquí (una por línea):", height=150)
 
-        if st.button("🚀 Procesar y Generar Excel", type="primary"):
+        if st.button("🚀 Procesar con Límite de Presupuesto", type="primary"):
             if input_ordenes:
                 lista_busqueda = [o.strip() for o in input_ordenes.split('\n') if o.strip()]
-                # Normalizar la columna de búsqueda
                 df_master[sel_orden] = df_master[sel_orden].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
-                df_res = df_master[df_master[sel_orden].isin(lista_busqueda)].copy()
+                
+                # Filtrar y mantener el orden en que se pegaron las órdenes
+                df_filtrado = df_master[df_master[sel_orden].isin(lista_busqueda)].copy()
+                
+                # Lógica de presupuesto
+                ordenes_aceptadas = []
+                costo_acumulado = 0
+                limite_maximo = 2600
+                ordenes_excluidas = 0
 
-                if not df_res.empty:
+                for _, fila in df_filtrado.iterrows():
+                    costo_actual = calcular_costo_item(fila[sel_modelo])
+                    if (costo_acumulado + costo_actual) <= limite_maximo:
+                        costo_acumulado += costo_actual
+                        ordenes_aceptadas.append(fila)
+                    else:
+                        ordenes_excluidas += 1
+
+                if ordenes_aceptadas:
+                    df_res = pd.DataFrame(ordenes_aceptadas)
                     df_res['CODIGO_PL'] = df_res[sel_modelo].apply(extraer_codigo_final)
                     
-                    # Estructura de salida
                     df_final = pd.DataFrame({
                         'ORDEN': df_res[sel_orden],
                         'SERIE': df_res[sel_serie],
@@ -82,35 +101,31 @@ if uploaded_file is not None:
                         'TALLER': df_res[sel_taller],
                         'REPUESTO': df_res[sel_repuesto],
                         'CODIGO': df_res['CODIGO_PL']
-                    })
+                    }).fillna("REVISAR")
 
-                    # Rellenar vacíos para evitar errores de medición de celdas
-                    df_final = df_final.fillna("REVISAR")
+                    # Mostrar resumen de presupuesto
+                    st.success(f"✅ Pedido generado. Presupuesto utilizado: ${costo_acumulado} / ${limite_maximo}")
+                    if ordenes_excluidas > 0:
+                        st.warning(f"⚠️ Se excluyeron {ordenes_excluidas} órdenes por superar el límite de $2600.")
 
                     st.dataframe(df_final, use_container_width=True)
 
-                    # --- DISEÑO DEL EXCEL ---
+                    # --- EXCEL PROFESIONAL ---
                     output = io.BytesIO()
                     with pd.ExcelWriter(output, engine='openpyxl') as writer:
                         df_final.to_excel(writer, index=False, sheet_name='PEDIDO')
                         ws = writer.sheets['PEDIDO']
-                        
-                        # Estilos
                         header_fill = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
                         header_font = Font(color="FFFFFF", bold=True)
                         center_align = Alignment(horizontal="center", vertical="center")
-                        thin_border = Border(left=Side(style='thin'), right=Side(style='thin'), 
-                                           top=Side(style='thin'), bottom=Side(style='thin'))
+                        thin_border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
 
-                        # Aplicar formatos y auto-ajuste
                         for col_num, column in enumerate(df_final.columns, 1):
                             cell = ws.cell(row=1, column=col_num)
                             cell.fill = header_fill
                             cell.font = header_font
                             cell.alignment = center_align
                             cell.border = thin_border
-                            
-                            # Medir ancho convirtiendo a string (evita error float)
                             max_len = max(df_final[column].astype(str).map(len).max(), len(column)) + 5
                             ws.column_dimensions[ws.cell(row=1, column=col_num).column_letter].width = max_len
 
@@ -119,8 +134,6 @@ if uploaded_file is not None:
                                 cell.border = thin_border
 
                     data_excel = output.getvalue()
-                    
-                    # NOMBRE DE ARCHIVO: PEDIDO BDG 64 MOTSUR TVS + FECHA CONTINUA
                     fecha_str = datetime.now().strftime('%d%m%Y')
                     nombre_archivo = f"PEDIDO BDG 64 MOTSUR TVS {fecha_str}.xlsx"
 
@@ -131,6 +144,6 @@ if uploaded_file is not None:
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                     )
                 else:
-                    st.error("No se encontraron las órdenes indicadas.")
+                    st.error("No se pudieron procesar órdenes dentro del presupuesto.")
     except Exception as e:
         st.error(f"Error técnico: {e}")
